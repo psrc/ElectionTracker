@@ -22,7 +22,7 @@ scrape_psrc_boards <- function() {
     stringsAsFactors = FALSE
   )
 
-  target_titles <- c("Executive", "Mayor", "Mayor Pro Tem", "Councilmember", "Commissioner")
+  target_titles <- c("Mayor Pro Tem", "Mayor", "Councilmember", "Commissioner", "Executive")
 
   all_board_members <- map_dfr(1:nrow(boards), function(i) {
     board <- boards[i, ]
@@ -90,9 +90,9 @@ scrape_psrc_boards <- function() {
             last_name <- ""
           }
 
-          # Get district from field-type-2 div
+          # Get district - corrected selector
           district <- item %>%
-            html_node(".field--name-field-type-2 .field-content div") %>%
+            html_node(".views-field-field-type-2 .field-content div") %>%
             html_text(trim = TRUE)
 
           if (is.na(district)) {
