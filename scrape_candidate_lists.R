@@ -1,22 +1,10 @@
 library(rvest)
 library(readr)
-library(dplyr)
+library(data.table)
 library(purrr)
-library(tibble)
 library(stringr)
 library(httr)
-
-# County codes mapping
-COUNTY_CODES <- list(
-  "King" = 17,
-  "Kitsap" = 18,
-  "Pierce" = 27,
-  "Snohomish" = 34
-)
-
-# Filtering terms
-DISTRICT_TERMS <- c("county", "city", "town")
-OFFICE_TERMS <- c("mayor", "council", "executive", "commissioner")
+library(magrittr)
 
 # Function to get the current election code
 get_current_election_code <- function() {
@@ -68,10 +56,6 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
       html_node("input[name='__VIEWSTATE']") %>%
       html_attr("value")
 
-    viewstate_generator <- page %>%
-      html_node("input[name='__VIEWSTATEGENERATOR']") %>%
-      html_attr("value")
-
     event_validation <- page %>%
       html_node("input[name='__EVENTVALIDATION']") %>%
       html_attr("value")
@@ -87,7 +71,6 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
         "__EVENTTARGET" = "ctl00$ContentPlaceHolder1$grdCandidates$ctl00$ctl02$ctl00$ExportToCsvButton",
         "__EVENTARGUMENT" = "",
         "__VIEWSTATE" = viewstate[1],
-        "__VIEWSTATEGENERATOR" = if(length(viewstate_generator) > 0) viewstate_generator[1] else "",
         "__EVENTVALIDATION" = event_validation[1]
       )
 
@@ -121,28 +104,23 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
         if (str_detect(content_type, "csv|text") || str_detect(csv_content, "^[^<]*,.*\n")) {
           message("Successfully got CSV data for ", county_name)
 
-          # Parse CSV
+          # Parse CSV and convert to data.table
           candidate_data <- read_csv(csv_content, show_col_types = FALSE) %>%
+            as.data.table() %>%
             # Clean column names
-            rename_with(~ tolower(gsub("[^A-Za-z0-9]", "_", .x))) %>%
-            select(c("district", "race", "name", "status", "election_status")) %>%
+            setnames(., tolower(gsub("[^A-Za-z0-9]", "_", names(.)))) %>%
+            .[, .(district, race, name, mailing_address, email, status, election_status)] %>%
             # Add county information
-            mutate(district = str_to_title(district),
-                   county   = county_name)
+            .[, `:=`(district = fcase(district=="County", paste(county_name, "County"),
+                                      default=custom_title_case(district)),
+                     county = county_name)
+            ]
 
-          # Filter based on district and office terms
-          district_col <- colnames(candidate_data)[str_detect(colnames(candidate_data), "district_type|district|jurisdiction")]
-          office_col <- colnames(candidate_data)[str_detect(colnames(candidate_data), "race|office|position|title")]
-
-          if (length(district_col) > 0 && length(office_col) > 0) {
-            filtered_data <- candidate_data %>%
-              filter(
-                str_detect(tolower(.data[[district_col[1]]]), paste(DISTRICT_TERMS, collapse = "|")) &
-                  str_detect(tolower(.data[[office_col[1]]]), paste(OFFICE_TERMS, collapse = "|"))
-              )
-          } else {
-            filtered_data <- candidate_data
-          }
+          filtered_data <- candidate_data[
+            str_detect(tolower(district), paste(DISTRICT_TERMS, collapse = "|")) &
+            !str_detect(tolower(district), "district") &
+            str_detect(tolower(race), paste(OFFICE_TERMS, collapse = "|"))
+          ]
 
           message("Found ", nrow(filtered_data), " candidates for ", county_name, " County")
           return(filtered_data)
@@ -150,52 +128,13 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
       }
     }
 
-    # Fallback to HTML table parsing
-    message("CSV export failed, using HTML parsing for ", county_name)
-
-    # Look for table with candidate data
-    tables <- page %>% html_table(fill = TRUE)
-
-    if (length(tables) > 0) {
-      # Find the main candidates table (usually the largest one)
-      main_table <- tables[[which.max(sapply(tables, nrow))]]
-
-      if (nrow(main_table) > 0 && ncol(main_table) > 5) {
-        # Clean column names
-        colnames(main_table) <- tolower(gsub("[^A-Za-z0-9]", "_", colnames(main_table)))
-
-        # Add county information
-        main_table$county <- county_name
-        main_table$county_code <- county_code
-        main_table$election_code <- election_code
-
-        # Filter based on district and office terms
-        district_col <- colnames(main_table)[str_detect(colnames(main_table), "district_type|district|jurisdiction")]
-        office_col <- colnames(main_table)[str_detect(colnames(main_table), "race|office|position|title")]
-
-        if (length(district_col) > 0 && length(office_col) > 0) {
-          filtered_table <- main_table %>%
-            filter(
-              str_detect(tolower(.data[[district_col[1]]]), paste(DISTRICT_TERMS, collapse = "|")) &
-                str_detect(tolower(.data[[office_col[1]]]), paste(OFFICE_TERMS, collapse = "|"))
-            )
-        } else {
-          # If we can't find the right columns, include all data for manual filtering
-          filtered_table <- main_table
-        }
-
-        message("Found ", nrow(filtered_table), " candidates for ", county_name, " County (HTML parsing)")
-        return(filtered_table)
-      }
-    }
-
-    # Return empty tibble if everything failed
-    message("No candidate data found for ", county_name, " County")
-    return(tibble())
+    # Return empty data.table if everything failed
+    message("CSV export failed for ", county_name, " County")
+    return(data.table())
 
   }, error = function(e) {
     message("Error processing ", county_name, " County candidates: ", e$message)
-    return(tibble())
+    return(data.table())
   })
 }
 
@@ -215,7 +154,7 @@ scrape_candidate_lists <- function(election_code = NULL) {
 
   message("Scraping candidate lists for election code: ", election_code, " across all counties")
 
-  all_candidates <- tibble()
+  all_candidates <- data.table()
   failed_counties <- character()
 
   # Process each county
@@ -225,7 +164,7 @@ scrape_candidate_lists <- function(election_code = NULL) {
     county_data <- scrape_single_county_candidates(election_code, county_name, county_code)
 
     if (nrow(county_data) > 0) {
-      all_candidates <- bind_rows(all_candidates, county_data)
+      all_candidates <- rbindlist(list(all_candidates, county_data), fill = TRUE)
     } else {
       failed_counties <- c(failed_counties, county_name)
     }
@@ -255,20 +194,15 @@ scrape_candidate_lists <- function(election_code = NULL) {
 
   # Only sort if we have data
   if (nrow(all_candidates) > 0) {
-    # Remove duplicates and sort using proper column references
-    all_candidates <- all_candidates %>%
-      distinct()
+    # Remove duplicatesf
+    all_candidates <- all_candidates %>% unique()
 
-    # Find appropriate columns for sorting
-    district_col <- colnames(all_candidates)[str_detect(colnames(all_candidates), "district_type|district|jurisdiction")]
-    office_col <- colnames(all_candidates)[str_detect(colnames(all_candidates), "race|office|position|title")]
-
-    if (length(district_col) > 0 && length(office_col) > 0) {
+    if (all(c("district", "race") %in% colnames(all_candidates))){
       all_candidates <- all_candidates %>%
-        arrange(county, .data[[district_col[1]]], .data[[office_col[1]]])
+        setorder(county, district, race)
     } else {
       all_candidates <- all_candidates %>%
-        arrange(county)
+        setorder(county)
     }
   }
 

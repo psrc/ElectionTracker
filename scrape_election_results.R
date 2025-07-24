@@ -1,29 +1,18 @@
 library(rvest)
-library(dplyr)
+library(data.table)
 library(purrr)
-library(tibble)
 library(stringr)
 library(httr)
 library(xml2)
-
-# County codes mapping
-COUNTY_CODES <- list(
-  "King" = "king",
-  "Kitsap" = "kitsap",
-  "Pierce" = "pierce",
-  "Snohomish" = "snohomish"
-)
-
-# Filtering terms for jurisdiction types
-JURISDICTION_TERMS <- c("county", "city", "town", "municipal")
+library(magrittr)
 
 # Helper function for single county (internal use)
-scrape_single_county_results <- function(election_date, county_name, county_code) {
+scrape_single_county_results <- function(election_date, county_name) {
 
   message("Processing ", county_name, " County election results")
 
   # Format URL for XML results
-  base_url <- paste0("https://results.vote.wa.gov/results/", election_date, "/export/", election_date, "_", county_code, ".xml")
+  base_url <- paste0("https://results.vote.wa.gov/results/", election_date, "/export/", election_date, "_", tolower(county_name), ".xml")
 
   tryCatch({
     # Fetch the XML data
@@ -39,9 +28,9 @@ scrape_single_county_results <- function(election_date, county_name, county_code
       results <- xml_find_all(xml_doc, "//Result")
 
       if (length(results) > 0) {
-        # Convert XML to data frame
+        # Convert XML to data.table
         results_data <- map_dfr(results, function(result) {
-          tibble(
+          data.table(
             race_name = xml_text(xml_find_first(result, "RaceName")),
             candidate = xml_text(xml_find_first(result, "Candidate")),
             party = xml_text(xml_find_first(result, "Party")),
@@ -50,19 +39,20 @@ scrape_single_county_results <- function(election_date, county_name, county_code
             jurisdiction_name = xml_text(xml_find_first(result, "JurisdictionName"))
           )
         }) %>%
-          # Add metadata
-          mutate(
-            county = county_name
-          )
+          # Convert to data.table; add metadata & outcome
+          as.data.table() %>%
+          .[, county := county_name] %>%
+          .[, outcome := ifelse(votes == max(votes), "won", "lost"),
+                         by = .(county, race_name)]
 
         # Filter based on jurisdiction terms if specified
         if ("jurisdiction_name" %in% colnames(results_data)) {
-          filtered_data <- results_data %>%
-            filter(jurisdiction_name %in% c("City/Town", "County") &
-                     !candidate %in% c("No", "Yes", "WRITE-IN") &
-                     str_detect(tolower(race_name), paste(c("mayor", "council", "executive", "commissioner"), collapse = "|"))
-            ) %>%
-            select(-any_of(c("jurisdiction_name", "party")))
+          filtered_data <- results_data[
+            jurisdiction_name %in% c("City/Town", "County") &
+              !candidate %in% c("No", "Yes", "WRITE-IN") &
+              str_detect(tolower(race_name), paste(c("mayor", "council", "executive", "commissioner"), collapse = "|"))
+          ] %>%
+            .[, !c("jurisdiction_name", "party")]
         } else {
           filtered_data <- results_data
         }
@@ -71,16 +61,16 @@ scrape_single_county_results <- function(election_date, county_name, county_code
         return(filtered_data)
       } else {
         message("No results found in XML for ", county_name, " County")
-        return(tibble())
+        return(data.table())
       }
     } else {
       message("Failed to fetch XML data for ", county_name, " County. HTTP status: ", status_code(response))
-      return(tibble())
+      return(data.table())
     }
 
   }, error = function(e) {
     message("Error processing ", county_name, " County results: ", e$message)
-    return(tibble())
+    return(data.table())
   })
 }
 
@@ -94,17 +84,16 @@ scrape_election_results <- function(election_date) {
 
   message("Scraping election results for date: ", election_date, " across all counties")
 
-  all_results <- tibble()
+  all_results <- data.table()
   failed_counties <- character()
 
   # Process each county
   for (county_name in names(COUNTY_CODES)) {
-    county_code <- COUNTY_CODES[[county_name]]
 
-    county_data <- scrape_single_county_results(election_date, county_name, county_code)
+    county_data <- scrape_single_county_results(election_date, county_name)
 
     if (nrow(county_data) > 0) {
-      all_results <- bind_rows(all_results, county_data)
+      all_results <- rbindlist(list(all_results, county_data), fill = TRUE)
     } else {
       failed_counties <- c(failed_counties, county_name)
     }
@@ -123,8 +112,7 @@ scrape_election_results <- function(election_date) {
     message("\nFor failed counties, check these URLs manually:")
 
     for (county in failed_counties) {
-      county_code <- COUNTY_CODES[[county]]
-      url <- paste0("https://results.vote.wa.gov/results/", election_date, "/export/", election_date, "_", county_code, ".xml")
+      url <- paste0("https://results.vote.wa.gov/results/", election_date, "/export/", election_date, "_", tolower(county_name), ".xml")
       message("   ", county, ": ", url)
     }
     message(strrep("=", 60))
@@ -136,10 +124,9 @@ scrape_election_results <- function(election_date) {
   if (nrow(all_results) > 0) {
     # Remove duplicates and sort
     all_results <- all_results %>%
-      distinct() %>%
-      arrange(county, race_name, candidate)
+      unique() %>%
+      setorder(county, race_name, candidate)
   }
 
   return(all_results)
 }
-

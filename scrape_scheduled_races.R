@@ -1,22 +1,10 @@
 library(rvest)
-library(dplyr)
+library(data.table)
 library(purrr)
-library(tibble)
 library(stringr)
 library(httr)
 library(readr)
-
-# County codes mapping
-COUNTY_CODES <- list(
-  "King" = 17,
-  "Kitsap" = 18,
-  "Pierce" = 27,
-  "Snohomish" = 34
-)
-
-# Filtering terms
-DISTRICT_TERMS <- c("county", "city", "town")
-OFFICE_TERMS <- c("mayor", "council", "executive", "commissioner")
+library(magrittr)
 
 # Helper function for single county (internal use)
 scrape_single_county_races <- function(year, county_name, county_code) {
@@ -80,22 +68,25 @@ scrape_single_county_races <- function(year, county_name, county_code) {
         if (str_detect(content_type %||% "", "csv|text") || str_detect(csv_content, "^[^<]*,.*\n")) {
           message("Successfully got CSV data for ", county_name, " County")
 
-          # Parse CSV
+          # Parse CSV and convert to data.table
           races_data <- readr::read_csv(csv_content, show_col_types = FALSE) %>%
+            as.data.table() %>%
             # Clean column names
-            rename_with(~ tolower(gsub("[^A-Za-z0-9]", "_", .x))) %>%
-            select(c("district", "lead_county", "office", "incumbent")) %>%
-            rename("county"="lead_county") %>%
-            mutate(district=str_to_title(district))
+            setnames(., tolower(gsub("[^A-Za-z0-9]", "_", names(.)))) %>%
+            .[, .(district, lead_county, office, incumbent)] %>%
+            setnames("lead_county", "county") %>%
+            .[, `:=`(district = fcase(district=="County", paste(county_name, "County"),
+                                      default=custom_title_case(district)),
+                     county = county_name)
+            ]
 
           # Filter based on district and office terms using the actual column names from CSV
           if ("district" %in% colnames(races_data) && "office" %in% colnames(races_data)) {
-            filtered_data <- races_data %>%
-              filter(
-                str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
-                  str_detect(tolower(office), paste0(OFFICE_TERMS, collapse = "|")) &
-                  !str_detect(tolower(district), "district")
-              )
+            filtered_data <- races_data[
+              str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
+                str_detect(tolower(office), paste0(OFFICE_TERMS, collapse = "|")) &
+                !str_detect(tolower(district), "district")
+            ]
           } else {
             # If column names don't match expectations, return all data
             message("Expected columns 'district' and 'office' not found for ", county_name, ". Returning all data.")
@@ -108,13 +99,13 @@ scrape_single_county_races <- function(year, county_name, county_code) {
       }
     }
 
-    # Return empty tibble if CSV export failed
+    # Return empty data.table if CSV export failed
     message("CSV export failed for ", county_name, " County")
-    return(tibble())
+    return(data.table())
 
   }, error = function(e) {
     message("Error processing ", county_name, " County: ", e$message)
-    return(tibble())
+    return(data.table())
   })
 }
 
@@ -123,7 +114,7 @@ scrape_scheduled_races <- function(year = 2025) {
 
   message("Scraping scheduled races for year: ", year, " across all counties")
 
-  all_races <- tibble()
+  all_races <- data.table()
   failed_counties <- character()
 
   # Process each county
@@ -133,7 +124,7 @@ scrape_scheduled_races <- function(year = 2025) {
     county_data <- scrape_single_county_races(year, county_name, county_code)
 
     if (nrow(county_data) > 0) {
-      all_races <- bind_rows(all_races, county_data)
+      all_races <- rbindlist(list(all_races, county_data), fill = TRUE)
     } else {
       failed_counties <- c(failed_counties, county_name)
     }
@@ -165,8 +156,8 @@ scrape_scheduled_races <- function(year = 2025) {
   if (nrow(all_races) > 0) {
     # Remove duplicates and sort using proper column references
     all_races <- all_races %>%
-      distinct() %>%
-      arrange(county_name, .data$district, .data$office)
+      unique() %>%
+      setorder(county, district, office)
   }
 
   return(all_races)

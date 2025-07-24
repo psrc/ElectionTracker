@@ -1,8 +1,8 @@
 library(rvest)
-library(dplyr)
+library(data.table)
 library(purrr)
-library(tibble)
 library(stringr)
+library(magrittr)
 
 # Function 4: Scrape PSRC board members
 scrape_psrc_boards <- function() {
@@ -10,7 +10,7 @@ scrape_psrc_boards <- function() {
   message("Scraping PSRC board members")
 
   # Define board URLs and abbreviations
-  boards <- data.frame(
+  boards <- data.table(
     url = c(
       "https://www.psrc.org/board/executive-board",
       "https://www.psrc.org/board/operations-committee",
@@ -18,8 +18,7 @@ scrape_psrc_boards <- function() {
       "https://www.psrc.org/board/growth-management-policy-board",
       "https://www.psrc.org/board/transportation-policy-board"
     ),
-    abbrev = c("EB", "OC", "EDD", "GMPB", "TPB"),
-    stringsAsFactors = FALSE
+    abbrev = c("EB", "OC", "EDD", "GMPB", "TPB")
   )
 
   target_titles <- c("Mayor Pro Tem", "Mayor", "Councilmember", "Commissioner", "Executive")
@@ -44,17 +43,15 @@ scrape_psrc_boards <- function() {
           html_text(trim = TRUE)
 
         if (is.na(section_title) || !section_title %in% c("Members", "Alternates")) {
-          return(tibble())
+          return(data.table())
         }
-
-        role <- ifelse(section_title == "Members", "Member", "Alternate")
 
         # Extract all list items
         list_items <- section %>%
           html_nodes("li")
 
         if (length(list_items) == 0) {
-          return(tibble())
+          return(data.table())
         }
 
         # Extract data from each list item
@@ -66,7 +63,7 @@ scrape_psrc_boards <- function() {
             html_text(trim = TRUE)
 
           if (is.na(title_name)) {
-            return(tibble())
+            return(data.table())
           }
 
           # Extract office and name using regex for target titles
@@ -74,37 +71,25 @@ scrape_psrc_boards <- function() {
           title_match <- str_match(title_name, title_pattern)
 
           if (is.na(title_match[1])) {
-            return(tibble())
+            return(data.table())
           }
 
           office <- title_match[2]
           full_name <- str_trim(title_match[3])
 
-          # Split name into first and last
-          name_parts <- str_split(full_name, "\\s+")[[1]]
-          if (length(name_parts) >= 2) {
-            first_name <- name_parts[1]
-            last_name <- paste(name_parts[2:length(name_parts)], collapse = " ")
-          } else {
-            first_name <- full_name
-            last_name <- ""
-          }
-
           # Get district - corrected selector
           district <- item %>%
             html_node(".views-field-field-type-2 .field-content div") %>%
-            html_text(trim = TRUE)
+            html_text(trim = TRUE) %>% custom_title_case()
 
           if (is.na(district)) {
             district <- ""
           }
 
-          tibble(
+          data.table(
             office = office,
-            first_name = first_name,
-            last_name = last_name,
+            full_name = full_name,
             district = district,
-            role = role,
             board_affiliation = board$abbrev
           )
         })
@@ -116,17 +101,20 @@ scrape_psrc_boards <- function() {
 
     }, error = function(e) {
       message("Error processing board ", board$abbrev, ": ", e$message)
-      return(tibble())
+      return(data.table())
     })
 
     # Add delay
     Sys.sleep(1)
-  })
+  }) %>%
+    as.data.table()
 
   # Remove any potential duplicates and empty rows
-  all_board_members <- all_board_members %>%
-    filter(nzchar(first_name)) %>%
-    distinct(first_name, last_name, board_affiliation, .keep_all = TRUE)
+  all_board_members <- all_board_members[nzchar(full_name)] %>%
+    unique(by = c("full_name", "board_affiliation"))
+
+  board_members <- all_board_members[, .(board_affiliation = paste(board_affiliation, collapse = ", ")),
+                by = .(title, full_name, district)]
 
   message("Found ", nrow(all_board_members), " PSRC board members")
   return(all_board_members)
