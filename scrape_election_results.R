@@ -7,7 +7,7 @@ library(xml2)
 library(magrittr)
 
 # Helper function for single county (internal use)
-scrape_single_county_results <- function(election_date, county_name) {
+scrape_single_county_results <- function(election_date, county_name, election_type) {
 
   message("Processing ", county_name, " County election results")
 
@@ -41,9 +41,17 @@ scrape_single_county_results <- function(election_date, county_name) {
         }) %>%
           # Convert to data.table; add metadata & outcome
           as.data.table() %>%
-          .[, county := county_name] %>%
-          .[, outcome := ifelse(votes == max(votes), "won", "lost"),
+          .[, county := county_name]
+
+        if(election_type=="general"){
+          results_data[, outcome := ifelse(votes == max(votes), "won", "lost"),
                          by = .(county, race_name)]
+        }else if(election_type=="primary"){
+          results_data[, outcome := fcase(
+            frank(-votes, ties.method = "min") <= 2, "advanced",
+            default = "lost"
+          ), by = .(county, race_name)]
+        }
 
         # Filter based on jurisdiction terms if specified
         if ("jurisdiction_name" %in% colnames(results_data)) {
@@ -75,7 +83,7 @@ scrape_single_county_results <- function(election_date, county_name) {
 }
 
 # Main vectorized function
-scrape_election_results <- function(election_date) {
+scrape_election_results <- function(election_date, election_type="general") {
 
   # Validate date format (should be YYYYMMDD)
   if (!str_detect(election_date, "^\\d{8}$")) {
@@ -90,7 +98,7 @@ scrape_election_results <- function(election_date) {
   # Process each county
   for (county_name in names(COUNTY_CODES)) {
 
-    county_data <- scrape_single_county_results(election_date, county_name)
+    county_data <- scrape_single_county_results(election_date, county_name, election_type)
 
     if (nrow(county_data) > 0) {
       all_results <- rbindlist(list(all_results, county_data), fill = TRUE)
