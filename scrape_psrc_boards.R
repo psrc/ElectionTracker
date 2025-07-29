@@ -66,7 +66,7 @@ scrape_psrc_boards <- function() {
             return(data.table())
           }
 
-          # Extract office and name using regex for target titles
+          # Extract title and name using regex for target titles
           title_pattern <- paste0("^(", paste(target_titles, collapse = "|"), ")\\s+(.+)$")
           title_match <- str_match(title_name, title_pattern)
 
@@ -74,7 +74,7 @@ scrape_psrc_boards <- function() {
             return(data.table())
           }
 
-          office <- title_match[2]
+          title <- title_match[2]
           full_name <- str_trim(title_match[3])
 
           # Get district - corrected selector
@@ -87,7 +87,7 @@ scrape_psrc_boards <- function() {
           }
 
           data.table(
-            office = office,
+            title = title,
             full_name = full_name,
             district = district,
             board_affiliation = board$abbrev
@@ -117,5 +117,5 @@ scrape_psrc_boards <- function() {
                 by = .(title, full_name, district)]
 
   message("Found ", nrow(all_board_members), " PSRC board members")
-  return(all_board_members)
+  return(board_members)
 }

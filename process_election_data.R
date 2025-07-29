@@ -61,7 +61,7 @@ standardize_and_sort <- function(data, sort_cols = c("county", "district", "offi
   # Only sort by columns that exist
   existing_cols <- intersect(sort_cols, names(data))
   if (length(existing_cols) > 0) {
-    setorder(data, cols = existing_cols)
+    do.call(setorder, c(list(data), as.list(existing_cols)))
   }
   data
 }
@@ -76,11 +76,12 @@ make_candidate_filing_report <- function(election_code = NULL, year = NULL) {
     board_members_running = join_board_with_races(election_data$psrc_boards, election_data$scheduled_races) %>%
       .[election_data$candidate_lists[status == "Active"],
         on = c("district", "county", "office" = "race", "full_name" = "name")] %>%
+      .[!is.na(board_affiliation)] %>%
       standardize_and_sort(),
 
     board_members_not_running = join_board_with_races(election_data$psrc_boards, election_data$scheduled_races) %>%
       .[!election_data$candidate_lists[status == "Active"],
-        on = c("district", "county", "office" = "race", "full_name" = "name")] %>%
+        on = c("district", "county", "full_name" = "name")] %>%
       standardize_and_sort()
   )
 }
@@ -128,7 +129,7 @@ make_general_election_report <- function(election_date, election_code = NULL, ye
       filter_by_outcome(election_data$election_results, "won", c("county", "race" = "race_name")) %>%
       .[candidate == incumbent] %>%
       .[!election_data$psrc_boards, on = c("county", "race_name" = "race", "candidate" = "full_name")] %>%
-      standardize_and_sort(c("county", "district", "office", "candidate")),
+      standardize_and_sort(c("county", "district", "title", "candidate")),
 
     newly_electeds = races_with_race_col %>%
       filter_by_outcome(election_data$election_results, "won", c("county", "race" = "race_name")) %>%
