@@ -86,6 +86,11 @@ scrape_single_county_races <- function(year, county_name, county_code) {
               str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
                 str_detect(tolower(office), paste0(OFFICE_TERMS, collapse = "|")) &
                 !str_detect(tolower(district), "district")
+            ] %>%
+            # Add county information
+            .[, `:=`(district = fcase(grepl("^County", district), paste(county_name, "County"),
+                                      default=custom_title_case(district)),
+                     county = county_name)
             ]
           } else {
             # If column names don't match expectations, return all data

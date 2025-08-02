@@ -11,17 +11,17 @@ scrape_psrc_boards <- function() {
 
   # Define board URLs and abbreviations
   boards <- data.table(
-    url = c(
-      "https://www.psrc.org/board/executive-board",
-      "https://www.psrc.org/board/operations-committee",
-      "https://www.psrc.org/board/economic-development-district-board",
-      "https://www.psrc.org/board/growth-management-policy-board",
-      "https://www.psrc.org/board/transportation-policy-board"
-    ),
+    url = paste0("https://www.psrc.org/board/",
+                 c("executive-board",
+                   "operations-committee",
+                   "economic-development-district-board",
+                   "growth-management-policy-board",
+                   "transportation-policy-board")),
     abbrev = c("EB", "OC", "EDD", "GMPB", "TPB")
   )
 
-  target_titles <- c("Mayor Pro Tem", "Mayor", "Councilmember", "Commissioner", "Executive")
+  target_titles <- c("Deputy Mayor","Mayor Pro Tem", "Mayor", "Councilmember", "Council President",
+                     "Commissioner", "Executive", "Representative", "Senator")
 
   all_board_members <- map_dfr(1:nrow(boards), function(i) {
     board <- boards[i, ]

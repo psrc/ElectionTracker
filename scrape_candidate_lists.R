@@ -108,18 +108,17 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
           candidate_data <- read_csv(csv_content, show_col_types = FALSE) %>%
             as.data.table() %>%
             # Clean column names
-            setnames(., tolower(gsub("[^A-Za-z0-9]", "_", names(.)))) %>%
+            setnames(., tolower(gsub("\\W", "_", names(.)))) %>%
             .[, .(district, race, name, mailing_address, email, status, election_status)] %>%
             # Add county information
-            .[, `:=`(district = fcase(district=="County", paste(county_name, "County"),
+            .[, `:=`(district = fcase(grepl("^County", district), paste(county_name, "County"),
                                       default=custom_title_case(district)),
                      county = county_name)
             ]
-
           filtered_data <- candidate_data[
-            str_detect(tolower(district), paste(DISTRICT_TERMS, collapse = "|")) &
-            !str_detect(tolower(district), "district") &
-            str_detect(tolower(race), paste(OFFICE_TERMS, collapse = "|"))
+            str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
+            str_detect(tolower(race), paste0(OFFICE_TERMS, collapse = "|")) &
+            !str_detect(tolower(paste(district, race)), paste0(DISTRICT_EXCLUSIONS, collapse = "|"))
           ]
 
           message("Found ", nrow(filtered_data), " candidates for ", county_name, " County")
@@ -194,7 +193,7 @@ scrape_candidate_lists <- function(election_code = NULL) {
 
   # Only sort if we have data
   if (nrow(all_candidates) > 0) {
-    # Remove duplicatesf
+    # Remove duplicates
     all_candidates <- all_candidates %>% unique()
 
     if (all(c("district", "race") %in% colnames(all_candidates))){

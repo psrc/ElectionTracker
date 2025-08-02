@@ -15,8 +15,10 @@ COUNTY_CODES <- list(
 )
 
 ## Filtering terms
-DISTRICT_TERMS <- c("county", "city", "town")
-OFFICE_TERMS <- c("mayor", "council", "executive", "commissioner")
+OFFICE_TERMS        <- c("mayor", "council", "executive", "commission")
+DISTRICT_TERMS      <- c("county", "city", "town", "port")
+DISTRICT_EXCLUSIONS <- c("school","water","fire","sewer","parks","airport",
+                         "charter review","ward","recreation")
 
 ## Helper for consistent capitalization
 custom_title_case <- function(text) {
@@ -47,10 +49,12 @@ load_election_data <- function(year = NULL, election_code = NULL, election_date 
   ) %>% lapply(setDT)
 }
 
-join_board_with_races <- function(psrc_boards, scheduled_races) {
+join_races_w_boards <- function(scheduled_races, psrc_boards) {
   psrc_boards %>%
-    .[scheduled_races, on = c("full_name" = "incumbent", "district"), nomatch = NULL] %>%
-    .[, race := paste(district, office)]
+    .[scheduled_races, on = c("full_name" = "incumbent"), allow.cartesian = TRUE] %>%
+    .[, race := paste(i.district, office)] %>%
+    .[, i.district:=NULL] %>%
+    .[mapply(grepl, district, race, fixed = TRUE)]
 }
 
 filter_by_outcome <- function(data, election_results, outcome, join_cols = c("county", "race" = "race_name", "full_name" = "candidate")) {
@@ -63,32 +67,34 @@ standardize_and_sort <- function(data, sort_cols = c("county", "district", "offi
   if (length(existing_cols) > 0) {
     do.call(setorder, c(list(data), as.list(existing_cols)))
   }
-  data
+  unique(data)
 }
 
 # Main report functions --------------------
 make_candidate_filing_report <- function(election_code = NULL, year = NULL) {
   election_data <- load_election_data(year, election_code)
 
-  list(
+x <-  list(
     candidate_list = election_data$candidate_lists[status == "Active"],
 
-    board_members_running = join_board_with_races(election_data$psrc_boards, election_data$scheduled_races) %>%
+    board_members_running = election_data$scheduled_races %>%
       .[election_data$candidate_lists[status == "Active"],
-        on = c("district", "county", "office" = "race", "full_name" = "name")] %>%
+        on = c("district", "county", "office" = "race", "incumbent" = "name")] %>%
+      join_races_w_boards(election_data$psrc_boards) %>%
       .[!is.na(board_affiliation)] %>%
       standardize_and_sort(),
 
-    board_members_not_running = join_board_with_races(election_data$psrc_boards, election_data$scheduled_races) %>%
+    board_members_not_running = election_data$scheduled_races %>%
       .[!election_data$candidate_lists[status == "Active"],
-        on = c("district", "county", "full_name" = "name")] %>%
+        on = c("district", "county", "office" = "race", "incumbent" = "name")] %>%
+      join_races_w_boards(election_data$psrc_boards) %>%
       standardize_and_sort()
   )
 }
 
 make_primary_election_report <- function(election_date, election_code = NULL, year = NULL) {
   election_data <- load_election_data(year, election_code, election_date)
-  board_with_races <- join_board_with_races(election_data$psrc_boards, election_data$scheduled_races)
+  board_with_races <- join_races_w_boards(election_data$scheduled_races,election_data$psrc_boards)
 
   list(
     advancing = filter_by_outcome(
@@ -108,7 +114,7 @@ make_primary_election_report <- function(election_date, election_code = NULL, ye
 
 make_general_election_report <- function(election_date, election_code = NULL, year = NULL) {
   election_data <- load_election_data(year, election_code, election_date)
-  board_with_races <- join_board_with_races(election_data$psrc_boards, election_data$scheduled_races)
+  board_with_races <- join_races_w_boards(election_data$scheduled_races, election_data$psrc_boards)
   races_with_race_col <- election_data$scheduled_races[, race := paste(district, office)]
 
   list(

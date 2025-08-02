@@ -58,7 +58,7 @@ scrape_single_county_results <- function(election_date, county_name, election_ty
           filtered_data <- results_data[
             jurisdiction_name %in% c("City/Town", "County") &
               !candidate %in% c("No", "Yes", "WRITE-IN") &
-              str_detect(tolower(race_name), paste(c("mayor", "council", "executive", "commissioner"), collapse = "|"))
+              str_detect(tolower(race_name), paste(OFFICE_TERMS , collapse = "|"))
           ] %>%
             .[, !c("jurisdiction_name", "party")]
         } else {
