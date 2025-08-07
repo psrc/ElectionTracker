@@ -110,15 +110,15 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
             # Clean column names
             setnames(., tolower(gsub("\\W", "_", names(.)))) %>%
             .[, .(district, race, name, mailing_address, email, status, election_status)] %>%
-            # Add county information
-            .[, `:=`(district = fcase(grepl("^County", district), paste(county_name, "County"),
-                                      default=custom_title_case(district)),
-                     county = county_name)
-            ]
+            # Add county information and full_race_name for matching
+            .[, district := ifelse(grepl("^County", trimws(district)), paste(county_name, "County"),
+                                  custom_title_case(district))] %>%
+            .[, `:=`(county = county_name,
+                     full_race_name = paste(district, race))]
           filtered_data <- candidate_data[
             str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
             str_detect(tolower(race), paste0(OFFICE_TERMS, collapse = "|")) &
-            !str_detect(tolower(paste(district, race)), paste0(DISTRICT_EXCLUSIONS, collapse = "|"))
+            !str_detect(tolower(full_race_name), paste0(DISTRICT_EXCLUSIONS, collapse = "|"))
           ]
 
           message("Found ", nrow(filtered_data), " candidates for ", county_name, " County")

@@ -31,7 +31,7 @@ scrape_single_county_results <- function(election_date, county_name, election_ty
         # Convert XML to data.table
         results_data <- map_dfr(results, function(result) {
           data.table(
-            race_name = xml_text(xml_find_first(result, "RaceName")),
+            race_name = custom_title_case(xml_text(xml_find_first(result, "RaceName"))),
             candidate = xml_text(xml_find_first(result, "Candidate")),
             party = xml_text(xml_find_first(result, "Party")),
             votes = as.numeric(xml_text(xml_find_first(result, "Votes"))),
@@ -56,7 +56,7 @@ scrape_single_county_results <- function(election_date, county_name, election_ty
         # Filter based on jurisdiction terms if specified
         if ("jurisdiction_name" %in% colnames(results_data)) {
           filtered_data <- results_data[
-            jurisdiction_name %in% c("City/Town", "County") &
+            jurisdiction_name %in% c("City/Town", "County", "Port") &
               !candidate %in% c("No", "Yes", "WRITE-IN") &
               str_detect(tolower(race_name), paste(OFFICE_TERMS , collapse = "|"))
           ] %>%

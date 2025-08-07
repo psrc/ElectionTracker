@@ -72,26 +72,20 @@ scrape_single_county_races <- function(year, county_name, county_code) {
           races_data <- readr::read_csv(csv_content, show_col_types = FALSE) %>%
             as.data.table() %>%
             # Clean column names
-            setnames(., tolower(gsub("[^A-Za-z0-9]", "_", names(.)))) %>%
-            .[, .(district, lead_county, office, incumbent)] %>%
-            setnames("lead_county", "county") %>%
-            .[, `:=`(district = fcase(district=="County", paste(county_name, "County"),
-                                      default=custom_title_case(district)),
-                     county = county_name)
-            ]
+            setnames(., tolower(gsub("[^A-Za-z0-9]", "_", names(.))))
 
           # Filter based on district and office terms using the actual column names from CSV
           if ("district" %in% colnames(races_data) && "office" %in% colnames(races_data)) {
-            filtered_data <- races_data[
-              str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
+            filtered_data <- races_data %>%
+              .[, .(district, lead_county, office, incumbent)] %>%
+              setnames("lead_county", "county") %>%
+            .[str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
                 str_detect(tolower(office), paste0(OFFICE_TERMS, collapse = "|")) &
-                !str_detect(tolower(district), "district")
-            ] %>%
+                !str_detect(tolower(district), "district")] %>%
             # Add county information
-            .[, `:=`(district = fcase(grepl("^County", district), paste(county_name, "County"),
-                                      default=custom_title_case(district)),
-                     county = county_name)
-            ]
+            .[, `:=`(district = ifelse(grepl("^County", trimws(district)), paste(county_name, "County"),
+                                       custom_title_case(district)),
+                     county = county_name)]
           } else {
             # If column names don't match expectations, return all data
             message("Expected columns 'district' and 'office' not found for ", county_name, ". Returning all data.")

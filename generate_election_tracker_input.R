@@ -108,18 +108,7 @@ find_best_name_match <- function(psrc_name, candidate_names, threshold = 0.8) {
     return(best_match$candidate)
   }
 
-  # Fallback: if no exact first/last match, try the original fuzzy matching
-  # for cases where there might be typos
-  distances <- adist(tolower(psrc_name), tolower(candidate_names)) /
-    pmax(nchar(psrc_name), nchar(candidate_names))
-
-  best_match_idx <- which.min(distances)
-  best_distance <- distances[best_match_idx]
-
-  if (best_distance <= (1 - threshold)) {
-    return(candidate_names[best_match_idx])
-  }
-
+  # No fallback fuzzy matching - return NA if no exact first/last match found
   return(NA_character_)
 }
 
@@ -137,8 +126,6 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
   # Create the election tracker input data
   election_tracker_input <- election_data$psrc_boards %>%
     copy() %>%
-    setnames("full_name", "psrc_name") %>%
-    setnames("district", "psrc_district") %>%  # Rename to avoid confusion
     .[, `:=`(
       ballot_name = NA_character_,
       not_seeking_reelection = FALSE,

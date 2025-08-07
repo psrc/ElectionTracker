@@ -75,21 +75,21 @@ scrape_psrc_boards <- function() {
           }
 
           title <- title_match[2]
-          full_name <- str_trim(title_match[3])
+          psrc_name <- str_trim(title_match[3])
 
           # Get district - corrected selector
-          district <- item %>%
+          psrc_district <- item %>%
             html_node(".views-field-field-type-2 .field-content div") %>%
             html_text(trim = TRUE) %>% custom_title_case()
 
-          if (is.na(district)) {
-            district <- ""
+          if (is.na(psrc_district)) {
+            psrc_district <- ""
           }
 
           data.table(
             title = title,
-            full_name = full_name,
-            district = district,
+            psrc_name = psrc_name,
+            psrc_district = psrc_district,
             board_affiliation = board$abbrev
           )
         })
@@ -110,11 +110,11 @@ scrape_psrc_boards <- function() {
     as.data.table()
 
   # Remove any potential duplicates and empty rows
-  all_board_members <- all_board_members[nzchar(full_name)] %>%
-    unique(by = c("full_name", "board_affiliation"))
+  all_board_members <- all_board_members[nzchar(psrc_name)] %>%
+    unique(by = c("psrc_name", "board_affiliation"))
 
   board_members <- all_board_members[, .(board_affiliation = paste(board_affiliation, collapse = ", ")),
-                by = .(title, full_name, district)]
+                by = .(title, psrc_name, psrc_district)]
 
   message("Found ", nrow(all_board_members), " PSRC board members")
   return(board_members)

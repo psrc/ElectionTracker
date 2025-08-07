@@ -29,7 +29,7 @@ custom_title_case <- function(text) {
     words <- ifelse(tolower(words) %in% exceptions,
                     tolower(words),
                     str_to_title(words))
-    str_c(words, collapse = " ")
+    str_trim(str_c(words, collapse = " "))
   })
 }
 
@@ -41,28 +41,18 @@ source("scrape_election_results.R")
 
 # Reporting helper functions --------------------------
 
-join_races_w_boards_updated <- function(scheduled_races, election_tracker_input) {
+join_boards_w_candidates <- function(election_tracker_input, candidate_lists) {
   # Create lookup for PSRC name to ballot name
   psrc_lookup <- election_tracker_input[
-    !is.na(ballot_name) & !not_seeking_reelection & !not_up_for_reelection,
-    .(psrc_name, ballot_name, title, district, board_affiliation)
+    !is.na(ballot_name) & !not_seeking_reelection & !not_up_for_reelection
   ]
 
   # Join scheduled races with PSRC board info using ballot names
-  result <- scheduled_races %>%
-    .[psrc_lookup, on = c("incumbent" = "ballot_name"), allow.cartesian = TRUE] %>%
-    .[, race := paste(i.district, office)] %>%
-    .[, i.district := NULL] %>%
-    .[mapply(grepl, district, race, fixed = TRUE)] %>%
-    # Add psrc_name back for reference
-    .[, full_name := i.psrc_name] %>%
-    .[, i.psrc_name := NULL]
+  result <- candidate_lists %>%
+    .[psrc_lookup, on = c("name" = "ballot_name"), allow.cartesian = TRUE] #%>%
+    #.[mapply(grepl, psrc_district, full_race_name, fixed=TRUE)]
 
   return(result)
-}
-
-filter_by_outcome <- function(data, election_results, outcome, join_cols = c("county", "race" = "race_name", "full_name" = "candidate")) {
-  data[election_results[outcome == ..outcome], on = join_cols, nomatch = NULL]
 }
 
 standardize_and_sort <- function(data, sort_cols = c("county", "district", "office", "full_name")) {
@@ -75,13 +65,13 @@ standardize_and_sort <- function(data, sort_cols = c("county", "district", "offi
 }
 
 # Primary Workflow --------------------
-load_election_data <- function(year = NULL, election_code = NULL, election_date = NULL) {
+load_election_data <- function(year = NULL, election_code = NULL, election_date = NULL, election_type = "general") {
   year <- year %||% format(Sys.Date(), "%Y")
 
   list(
     scheduled_races = scrape_scheduled_races(year),
     candidate_lists = scrape_candidate_lists(election_code),
-    election_results = if (!is.null(election_date)) scrape_election_results(election_date),
+    election_results = if (!is.null(election_date)) scrape_election_results(election_date, election_type),
     psrc_boards = scrape_psrc_boards()
   ) %>% lapply(setDT)
 }
@@ -114,19 +104,10 @@ make_candidate_filing_report <- function(election_code = NULL, year = NULL,
 
   # Get board members who are running (have ballot_name);
   # combine with candidate data
-  board_members_running <- election_tracker_input[!is.na(ballot_name)] %>%
-    .[election_data$candidate_lists[status == "Active"],
-      on = c("ballot_name" = "name"),
-      nomatch = NULL]
-
-  # Add seeking_new_office flag by joining with scheduled_races
-  board_members_running[election_data$scheduled_races,
-                        seeking_new_office := incumbent != ballot_name,
-                        on = c("district", "race" = "office")]
-
-  board_members_running[, `:=`(
+  board_members_running <- join_boards_w_candidates(election_tracker_input, election_data$candidate_lists) %>%
+  .[, `:=`(
     not_seeking_reelection = NULL,
-    not_up_for_reelection = NULL  # Drop duplicate county field
+    not_up_for_reelection = NULL
   )] %>%
     standardize_and_sort()
 
@@ -165,50 +146,36 @@ make_primary_election_report <- function(election_date, election_code = NULL, ye
     election_tracker_input <- load_election_tracker_input()
   }
 
-  election_data <- load_election_data(year, election_code, election_date)
-  board_with_races <- join_races_w_boards_updated(election_data$scheduled_races, election_tracker_input)
+  election_data <- load_election_data(year, election_code, election_date, "primary")
+  board_members_running <- join_boards_w_candidates(election_tracker_input, election_data$candidate_lists)
 
   list(
-    advancing = filter_by_outcome(
-      election_data$candidate_lists,
-      election_data$election_results,
-      "advanced",
-      c("county", "race" = "race_name", "full_name" = "candidate")
-    ),
+    advancing = election_data$candidate_lists %>%
+      .[election_data$election_results[outcome == "advanced"],
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
+      #.[mapply(grepl, full_race_name, race_name, fixed = TRUE)] %>%
+      .[, .SD, .SDcols = names(election_data$candidate_lists)] %>%
+      rbind(election_data$candidate_lists[election_status == "Advanced to General"]) %>% unique(),
 
-    board_members_advanced = filter_by_outcome(
-      board_with_races,
-      election_data$election_results,
-      "advanced",
-      c("county", "race" = "race_name", "full_name" = "ballot_name")
-    )[!is.na(psrc_name)  # Filter to return only board members
-    ][, `:=`(
+    board_members_advanced = board_members_running %>%
+      .[election_data$election_results[outcome == "advanced"],
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
+      #.[mapply(grepl, full_race_name, race_name, fixed = TRUE)] %>%
+      .[, .SD, .SDcols = names(board_members_running)] %>%
+      rbind(board_members_running[election_status=="Advanced to General"]) %>% unique() %>%
+      .[, `:=`(
       not_seeking_reelection = NULL,  # Drop logically obvious fields
       not_up_for_reelection = NULL
-    )] %>%
-      # Add seeking_new_office logic
-      .[election_data$scheduled_races,
-        on = c("district", "office"),
-        `:=`(seeking_new_office = incumbent != ballot_name)
-      ] %>%
-      standardize_and_sort(),
+    )] %>% standardize_and_sort(),
 
-    board_members_lost = filter_by_outcome(
-      board_with_races,
-      election_data$election_results,
-      "lost",
-      c("county", "race" = "race_name", "full_name" = "ballot_name")
-    )[!is.na(psrc_name)  # Filter to return only board members
-    ][, `:=`(
-      not_seeking_reelection = NULL,  # Drop logically obvious fields
-      not_up_for_reelection = NULL
-    )] %>%
-      # Add seeking_new_office logic
-      .[election_data$scheduled_races,
-        on = c("district", "office"),
-        `:=`(seeking_new_office = incumbent != ballot_name)
-      ] %>%
-      standardize_and_sort(),
+    board_members_lost = board_members_running %>%
+      .[election_data$election_results[outcome == "lost"],
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
+      #.[mapply(grepl, full_race_name, race_name, fixed = TRUE)] %>%
+      .[, `:=`(
+        not_seeking_reelection = NULL,  # Drop logically obvious fields
+        not_up_for_reelection = NULL
+      )] %>% standardize_and_sort(),
 
     not_seeking_reelection = election_tracker_input[
       not_seeking_reelection == TRUE
@@ -240,63 +207,38 @@ make_general_election_report <- function(election_date, election_code = NULL, ye
     election_tracker_input <- load_election_tracker_input()
   }
 
-  election_data <- load_election_data(year, election_code, election_date)
-  board_with_races <- join_races_w_boards_updated(election_data$scheduled_races, election_tracker_input)
-  races_with_race_col <- election_data$scheduled_races[, race := paste(district, office)]
+  election_data <- load_election_data(year, election_code, election_date, "general")
+  board_members_running <- join_boards_w_candidates(election_tracker_input, election_data$candidate_lists)
+  winners <- election_data$candidate_lists %>%
+    .[election_data$election_results[outcome == "won"],
+      on = c("county", "full_race_name" = "race_name", "name" = "candidate"), nomatch = NULL]
 
   list(
-    winners = filter_by_outcome(
-      races_with_race_col,
-      election_data$election_results,
-      "won",
-      c("county", "race" = "race_name")
-    ) %>% standardize_and_sort(c("county", "district", "office", "candidate")),
+    won = winners,
 
-    board_members_won = filter_by_outcome(
-      board_with_races,
-      election_data$election_results,
-      "won",
-      c("county", "race" = "race_name", "full_name" = "ballot_name")
-    )[!is.na(psrc_name)  # Filter to return only board members
-    ][, `:=`(
-      not_seeking_reelection = NULL,  # Drop logically obvious fields
-      not_up_for_reelection = NULL
-    )] %>%
-      # Add seeking_new_office logic
-      .[election_data$scheduled_races,
-        on = c("district", "office"),
-        `:=`(seeking_new_office = incumbent != ballot_name)
-      ] %>%
-      standardize_and_sort(),
+    board_members_advanced = board_members_running %>%
+      .[election_data$election_results[outcome == "won"],
+        on = c("county", "full_race_name" = "race_name", "name" = "candidate"), nomatch = NULL] %>%
+      .[, `:=`(
+        not_seeking_reelection = NULL,  # Drop logically obvious fields
+        not_up_for_reelection = NULL
+      )] %>% standardize_and_sort(),
 
-    board_members_lost = filter_by_outcome(
-      board_with_races,
-      election_data$election_results,
-      "lost",
-      c("county", "race" = "race_name", "full_name" = "ballot_name")
-    )[!is.na(psrc_name)  # Filter to return only board members
-    ][, `:=`(
-      not_seeking_reelection = NULL,  # Drop logically obvious fields
-      not_up_for_reelection = NULL
-    )] %>%
-      # Add seeking_new_office logic
-      .[election_data$scheduled_races,
-        on = c("district", "office"),
-        `:=`(seeking_new_office = incumbent != ballot_name)
-      ] %>%
-      standardize_and_sort(),
+    board_members_lost = board_members_running %>%
+      .[election_data$election_results[outcome == "lost"],
+        on = c("county", "full_race_name" = "race_name", "name" = "candidate"), nomatch = NULL] %>%
+      .[, `:=`(
+        not_seeking_reelection = NULL,  # Drop logically obvious fields
+        not_up_for_reelection = NULL
+      )] %>% standardize_and_sort(),
 
-    non_board_reelecteds = races_with_race_col %>%
-      filter_by_outcome(election_data$election_results, "won", c("county", "race" = "race_name")) %>%
-      .[candidate == incumbent] %>%
+    non_board_reelecteds = winners[candidate == incumbent] %>%
       # Exclude board members using the election tracker
       .[!election_tracker_input[!is.na(ballot_name)],
         on = c("candidate" = "ballot_name")] %>%
       standardize_and_sort(c("county", "district", "title", "candidate")),
 
-    newly_electeds = races_with_race_col %>%
-      filter_by_outcome(election_data$election_results, "won", c("county", "race" = "race_name")) %>%
-      .[candidate != incumbent] %>%
+    newly_electeds = winners[candidate != incumbent] %>%
       setnames("incumbent", "replaces") %>%
       standardize_and_sort(c("county", "district", "office", "candidate")),
 
@@ -326,6 +268,6 @@ make_general_election_report <- function(election_date, election_code = NULL, ye
 # eti <- generate_election_tracker_input(2025, 893)
 # eti <- load_election_tracker_input()
 # candidate_filing_2025 <- make_candidate_filing_report(2025, 893, eti)
-# primary_election_2025 <- make_primary_election_report(2025, 893)
-# general_election_2025 <- make_general_election_report(2025, 894)
+# primary_election_2025 <- make_primary_election_report("20250805", 893, 2025, eti)
+# general_election_2025 <- make_general_election_report("20251104", 894, 2025, eti)
 
