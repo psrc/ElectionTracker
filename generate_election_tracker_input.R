@@ -210,25 +210,11 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
             str_detect(tolower(race), tolower(gsub("member|councilmember", "council", title)))
         ]
 
-        cat("Relevant candidates found:", nrow(relevant_candidates), "\n")
-
         if (nrow(relevant_candidates) > 0) {
           # Try to find best name match
           best_match <- find_best_name_match(psrc_name, relevant_candidates$name)
           cat("Best match found:", best_match, "\n")
           election_tracker_input$ballot_name[i] <- best_match
-        } else {
-          # Try matching on first name across all active candidates as last resort
-          first_name <- str_split(psrc_name, " ")[[1]][1]
-          broad_candidates <- active_candidates[str_detect(tolower(name), paste0("^", tolower(first_name), "\\s"))]
-
-          cat("Trying first name match, broad candidates found:", nrow(broad_candidates), "\n")
-
-          if (nrow(broad_candidates) > 0) {
-            best_match <- find_best_name_match(psrc_name, broad_candidates$name)
-            cat("Broad match found:", best_match, "\n")
-            election_tracker_input$ballot_name[i] <- best_match
-          }
         }
 
         # If still no match found AND they're an incumbent, mark as not seeking reelection
