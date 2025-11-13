@@ -53,6 +53,9 @@ scrape_single_county_results <- function(election_date, county_name, election_ty
           ), by = .(county, race_name)]
         }
 
+        # Add normalized race name for robust joins
+        results_data[, race_name_norm := normalize_race(race_name)]
+
         # Filter based on jurisdiction terms if specified
         if ("jurisdiction_name" %in% colnames(results_data)) {
           filtered_data <- results_data[
@@ -120,7 +123,7 @@ scrape_election_results <- function(election_date, election_type="general") {
     message("\nFor failed counties, check these URLs manually:")
 
     for (county in failed_counties) {
-      url <- paste0("https://results.vote.wa.gov/results/", election_date, "/export/", election_date, "_", tolower(county_name), ".xml")
+      url <- paste0("https://results.vote.wa.gov/results/", election_date, "/export/", election_date, "_", tolower(county), ".xml")
       message("   ", county, ": ", url)
     }
     message(strrep("=", 60))
