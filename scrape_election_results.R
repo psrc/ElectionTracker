@@ -31,7 +31,7 @@ scrape_single_county_results <- function(election_date, county_name, election_ty
         # Convert XML to data.table
         results_data <- map_dfr(results, function(result) {
           data.table(
-            race_name = custom_title_case(xml_text(xml_find_first(result, "RaceName"))),
+            contest_name = custom_title_case(xml_text(xml_find_first(result, "RaceName"))),
             candidate = xml_text(xml_find_first(result, "Candidate")),
             party = xml_text(xml_find_first(result, "Party")),
             votes = as.numeric(xml_text(xml_find_first(result, "Votes"))),
@@ -45,23 +45,23 @@ scrape_single_county_results <- function(election_date, county_name, election_ty
 
         if(election_type=="general"){
           results_data[, outcome := ifelse(votes == max(votes), "won", "lost"),
-                         by = .(county, race_name)]
+                         by = .(county, contest_name)]
         }else if(election_type=="primary"){
           results_data[, outcome := fcase(
             frank(-votes, ties.method = "min") <= 2, "advanced",
             default = "lost"
-          ), by = .(county, race_name)]
+          ), by = .(county, contest_name)]
         }
 
-        # Add normalized race name for robust joins
-        results_data[, race_name_norm := normalize_race(race_name)]
+        # Add normalized contest name for robust joins
+        results_data[, contest_name_norm := normalize_contest(contest_name)]
 
         # Filter based on jurisdiction terms if specified
         if ("jurisdiction_name" %in% colnames(results_data)) {
           filtered_data <- results_data[
             jurisdiction_name %in% c("City/Town", "County", "Port") &
               !candidate %in% c("No", "Yes", "WRITE-IN") &
-              str_detect(tolower(race_name), paste(OFFICE_TERMS , collapse = "|"))
+              str_detect(tolower(contest_name), paste(OFFICE_TERMS , collapse = "|"))
           ] %>%
             .[, !c("jurisdiction_name", "party")]
         } else {
@@ -136,7 +136,7 @@ scrape_election_results <- function(election_date, election_type="general") {
     # Remove duplicates and sort
     all_results <- all_results %>%
       unique() %>%
-      setorder(county, race_name, candidate)
+      setorder(county, contest_name, candidate)
   }
 
   return(all_results)

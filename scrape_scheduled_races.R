@@ -7,9 +7,9 @@ library(readr)
 library(magrittr)
 
 # Helper function for single county (internal use)
-scrape_single_county_races <- function(year, county_name, county_code) {
+scrape_single_county_contests <- function(year, county_name, county_code) {
 
-  message("Processing ", county_name, " County races for year: ", year)
+  message("Processing ", county_name, " County contests for year: ", year)
 
   base_url <- paste0("https://voter.votewa.gov/ScheduledRaces.aspx?y=", year, "&c=", county_code)
 
@@ -69,14 +69,14 @@ scrape_single_county_races <- function(year, county_name, county_code) {
           message("Successfully got CSV data for ", county_name, " County")
 
           # Parse CSV and convert to data.table
-          races_data <- readr::read_csv(csv_content, show_col_types = FALSE) %>%
+          contests_data <- readr::read_csv(csv_content, show_col_types = FALSE) %>%
             as.data.table() %>%
             # Clean column names
             setnames(., tolower(gsub("[^A-Za-z0-9]", "_", names(.))))
 
           # Filter based on district and office terms using the actual column names from CSV
-          if ("district" %in% colnames(races_data) && "office" %in% colnames(races_data)) {
-            filtered_data <- races_data %>%
+          if ("district" %in% colnames(contests_data) && "office" %in% colnames(contests_data)) {
+            filtered_data <- contests_data %>%
               .[, .(district, lead_county, office, incumbent)] %>%
               setnames("lead_county", "county") %>%
             .[str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
@@ -89,10 +89,10 @@ scrape_single_county_races <- function(year, county_name, county_code) {
           } else {
             # If column names don't match expectations, return all data
             message("Expected columns 'district' and 'office' not found for ", county_name, ". Returning all data.")
-            filtered_data <- races_data
+            filtered_data <- contests_data
           }
 
-          message("Found ", nrow(filtered_data), " scheduled races for ", county_name, " County")
+          message("Found ", nrow(filtered_data), " scheduled contests for ", county_name, " County")
           return(filtered_data)
         }
       }
@@ -111,19 +111,19 @@ scrape_single_county_races <- function(year, county_name, county_code) {
 # Main vectorized function
 scrape_scheduled_races <- function(year = 2025) {
 
-  message("Scraping scheduled races for year: ", year, " across all counties")
+  message("Scraping scheduled contests for year: ", year, " across all counties")
 
-  all_races <- data.table()
+  all_contests <- data.table()
   failed_counties <- character()
 
   # Process each county
   for (county_name in names(COUNTY_CODES)) {
     county_code <- COUNTY_CODES[[county_name]]
 
-    county_data <- scrape_single_county_races(year, county_name, county_code)
+    county_data <- scrape_single_county_contests(year, county_name, county_code)
 
     if (nrow(county_data) > 0) {
-      all_races <- rbindlist(list(all_races, county_data), fill = TRUE)
+      all_contests <- rbindlist(list(all_contests, county_data), fill = TRUE)
     } else {
       failed_counties <- c(failed_counties, county_name)
     }
@@ -149,15 +149,15 @@ scrape_scheduled_races <- function(year = 2025) {
     message(strrep("=", 60))
   }
 
-  message("Total scheduled races collected: ", nrow(all_races))
+  message("Total scheduled contests collected: ", nrow(all_contests))
 
   # Only sort if we have data
-  if (nrow(all_races) > 0) {
+  if (nrow(all_contests) > 0) {
     # Remove duplicates and sort using proper column references
-    all_races <- all_races %>%
+    all_contests <- all_contests %>%
       unique() %>%
       setorder(county, district, office)
   }
 
-  return(all_races)
+  return(all_contests)
 }

@@ -153,8 +153,8 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
     psrc_district <- election_tracker_input$psrc_district[i]  # Updated variable name
     title <- election_tracker_input$title[i]
 
-    # Check if this person appears as an incumbent in scheduled_races
-    is_incumbent <- check_name_appears(psrc_name, election_data$scheduled_races$incumbent)
+    # Check if this person appears as an incumbent in scheduled_contests
+    is_incumbent <- check_name_appears(psrc_name, election_data$scheduled_contests$incumbent)
 
     # Check if this person appears as a candidate (any status)
     appears_as_candidate <- check_name_appears(psrc_name, election_data$candidate_lists$name)
@@ -191,10 +191,10 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
         cat("PSRC District:", psrc_district, "\n")  # Updated variable name
         cat("Title:", title, "\n")
 
-        # Look for relevant candidates in their district/race
+        # Look for relevant candidates in their district/contest
         relevant_candidates <- active_candidates[
-          str_detect(tolower(paste(psrc_district, race)), tolower(psrc_district)) |
-            str_detect(tolower(race), tolower(gsub("member|councilmember", "council", title)))
+          str_detect(tolower(paste(psrc_district, contest)), tolower(psrc_district)) |
+            str_detect(tolower(contest), tolower(gsub("member|councilmember", "council", title)))
         ]
 
         if (nrow(relevant_candidates) > 0) {
@@ -222,16 +222,16 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
 
       ballot_name <- election_tracker_input$ballot_name[i]
 
-      # Find their candidate record to get district and race
+      # Find their candidate record to get district and contest
       candidate_record <- active_candidates[name == ballot_name]
 
       if (nrow(candidate_record) > 0) {
         candidate_district <- candidate_record$district[1]
-        candidate_race <- candidate_record$race[1]
+        candidate_contest <- candidate_record$contest[1]
 
-        # Look up in scheduled_races to see if they're the incumbent
-        scheduled_match <- election_data$scheduled_races[
-          district == candidate_district & office == candidate_race
+        # Look up in scheduled_contests to see if they're the incumbent
+        scheduled_match <- election_data$scheduled_contests[
+          district == candidate_district & office == candidate_contest
         ]
 
         if (nrow(scheduled_match) > 0) {

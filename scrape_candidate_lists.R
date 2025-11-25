@@ -109,17 +109,29 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
             as.data.table() %>%
             # Clean column names
             setnames(., tolower(gsub("\\W", "_", names(.)))) %>%
-            .[, .(district, race, name, mailing_address, email, status, election_status)] %>%
-            # Add county information and full_race_name for matching
+            # Map SOS race/office-style column into 'contest' field
+            { dt <- .;
+              if ("contest" %in% names(dt)) {
+                dt
+              } else if ("race" %in% names(dt)) {
+                dt[, contest := race]
+              } else if ("office" %in% names(dt)) {
+                dt[, contest := office]
+              } else {
+                stop("Could not find a race/office/contest column in candidate CSV for ", county_name)
+              }
+            } %>%
+            .[, .(district, contest, name, mailing_address, email, status, election_status)] %>%
+            # Add county information and full_contest_name for matching
             .[, district := ifelse(grepl("^County", trimws(district)), paste(county_name, "County"),
                                   custom_title_case(district))] %>%
             .[, `:=`(county = county_name,
-                     full_race_name = paste(district, race))] %>%
-            .[, full_race_name_norm := normalize_race(full_race_name)]
+                     full_contest_name = paste(district, contest))] %>%
+            .[, full_contest_name_norm := normalize_contest(full_contest_name)]
           filtered_data <- candidate_data[
             str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
-            str_detect(tolower(race), paste0(OFFICE_TERMS, collapse = "|")) &
-            !str_detect(tolower(full_race_name), paste0(DISTRICT_EXCLUSIONS, collapse = "|"))
+            str_detect(tolower(contest), paste0(OFFICE_TERMS, collapse = "|")) &
+            !str_detect(tolower(full_contest_name), paste0(DISTRICT_EXCLUSIONS, collapse = "|"))
           ]
 
           message("Found ", nrow(filtered_data), " candidates for ", county_name, " County")
@@ -197,9 +209,9 @@ scrape_candidate_lists <- function(election_code = NULL) {
     # Remove duplicates
     all_candidates <- all_candidates %>% unique()
 
-    if (all(c("district", "race") %in% colnames(all_candidates))){
+    if (all(c("district", "contest") %in% colnames(all_candidates))){
       all_candidates <- all_candidates %>%
-        setorder(county, district, race)
+        setorder(county, district, contest)
     } else {
       all_candidates <- all_candidates %>%
         setorder(county)
