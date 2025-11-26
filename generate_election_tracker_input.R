@@ -3,6 +3,7 @@ library(stringr)
 library(openxlsx)
 library(magrittr)
 library(purrr)
+library(lubridate)
 
 # Helper function for fuzzy name matching
 # Helper function for name matching with middle names/initials and suffixes
@@ -142,11 +143,49 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
 
   message("Generating election tracker input file...")
 
+  # Helper to compute dates (YYYYMMDD) for the previous three general elections
+  prev3_generals_dates <- function(year) {
+    sapply((year - 3):(year - 1), function(y) {
+      d <- ymd(paste0(y, "1101"))
+      format(d + days((1 - wday(d, week_start = 1)) %% 7 + 1), "%Y%m%d")
+    })
+  }
+
+  # Helper to get recent winners from last three general elections
+  get_recent_winners <- function(year) {
+    dates <- prev3_generals_dates(year)
+
+    winner_list <- lapply(dates, function(edate) {
+      results_dt <- scrape_election_results(edate, election_type = "general")
+
+      if (is.null(results_dt) || nrow(results_dt) == 0) {
+        return(NULL)
+      }
+
+      results_dt[outcome == "won"][, election_date := edate][]
+    })
+
+    winner_list <- Filter(Negate(is.null), winner_list)
+
+    if (length(winner_list) == 0) {
+      return(data.table())
+    }
+
+    rbindlist(winner_list, fill = TRUE)
+  }
+
   # Load all election data
   election_data <- load_election_data(year, election_code)
 
   # Get active candidates only
   active_candidates <- election_data$candidate_lists[status == "Active"]
+
+  # Get recent winners across the last three general elections
+  recent_winner <- if (!is.null(year)) get_recent_winners(year) else data.table()
+
+  if (nrow(recent_winner) == 0) {
+    message("Warning: recent_winner is empty. Candidates not up for reelection will appear as 'no_match_found'.")
+  }
 
   # Create the election tracker input data
   election_tracker_input <- election_data$psrc_boards %>%
@@ -155,7 +194,8 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
       ballot_name = NA_character_,
       not_seeking_reelection = FALSE,
       not_up_for_reelection = FALSE,
-      seeking_new_office = FALSE
+      seeking_new_office = FALSE,
+      no_match_found = FALSE
     )]
 
   # Helper function to check if names match (accounting for middle names/suffixes)
@@ -187,10 +227,20 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
     # Check if this person appears as an ACTIVE candidate
     appears_as_active_candidate <- check_name_appears(psrc_name, active_candidates$name)
 
-    # Logic for not_up_for_reelection:
-    # TRUE when there is NO candidate with that name AND NO incumbent with that name
-    if (!appears_as_candidate && !is_incumbent) {
+    # Check if this person appears as a recent winner (holds office)
+    holds_office <- check_name_appears(psrc_name, recent_winner$candidate)
+
+    # Logic for not_up_for_reelection and no_match_found:
+    # not_up_for_reelection = TRUE when there is NO candidate with that name,
+    # NO incumbent with that name, BUT they appear as a recent winner
+    if (!appears_as_candidate && !is_incumbent && holds_office) {
       election_tracker_input$not_up_for_reelection[i] <- TRUE
+    }
+
+    # no_match_found = TRUE when there is NO candidate with that name,
+    # NO incumbent with that name, and they do NOT appear as a recent winner
+    if (!appears_as_candidate && !is_incumbent && !holds_office) {
+      election_tracker_input$no_match_found[i] <- TRUE
     }
 
     # Logic for not_seeking_reelection:
@@ -288,6 +338,7 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
   not_seeking_col <- which(names(election_tracker_input) == "not_seeking_reelection")
   not_up_col <- which(names(election_tracker_input) == "not_up_for_reelection")
   seeking_new_col <- which(names(election_tracker_input) == "seeking_new_office")
+  no_match_col <- which(names(election_tracker_input) == "no_match_found")
 
   # Apply styling to each checkbox column separately
   addStyle(wb, "PSRC_Election_Tracker", checkboxStyle,
@@ -299,9 +350,12 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
   addStyle(wb, "PSRC_Election_Tracker", checkboxStyle,
            rows = 2:(nrow(election_tracker_input) + 1), cols = seeking_new_col)
 
+  addStyle(wb, "PSRC_Election_Tracker", checkboxStyle,
+           rows = 2:(nrow(election_tracker_input) + 1), cols = no_match_col)
+
   # Set column widths
   setColWidths(wb, "PSRC_Election_Tracker", cols = 1:ncol(election_tracker_input),
-               widths = c(15, 25, 20, 20, 25, 20, 20, 18))
+               widths = c(15, 25, 20, 20, 25, 20, 20, 18, 18))
 
   # Save file
   saveWorkbook(wb, output_file, overwrite = TRUE)
@@ -312,6 +366,7 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
   message("Automatically matched names: ", sum(!is.na(election_tracker_input$ballot_name)))
   message("Flagged as not up for reelection: ", sum(election_tracker_input$not_up_for_reelection))
   message("Flagged as not seeking reelection: ", sum(election_tracker_input$not_seeking_reelection))
+  message("Flagged as no match found: ", sum(election_tracker_input$no_match_found))
 
   return(election_tracker_input)
 }
