@@ -23,6 +23,7 @@ DISTRICT_EXCLUSIONS <- c("school", "water", "fire", "sewer", "parks", "airport",
 candidate_rpt_cols <- c("county", "district", "contest", "name", "board_affiliation",
                          "email", "election_status", "seeking_new_office")
 noncandidate_rpt_cols <- c("title","psrc_name","psrc_district","board_affiliation")
+election_rpt_cols <- c("full_contest_name", "votes", "percentage", "outcome")
 
 
 ## Helper for consistent capitalization
@@ -35,15 +36,6 @@ custom_title_case <- function(text) {
                     str_to_title(words))
     str_trim(str_c(words, collapse = " "))
   })
-}
-
-# Normalize contest/jurisdiction strings to improve join reliability
-normalize_contest <- function(x) {
-  x %>%
-    tolower() %>%
-    str_replace_all("\\b(city of|county|port of)\\b", "") %>%
-    str_replace_all("[^a-z0-9]+", " ") %>%
-    str_squish()
 }
 
 source("scrape_psrc_boards.R")
@@ -77,8 +69,22 @@ standardize_and_sort <- function(data, sort_cols = c("county", "district", "cont
   dt[, .SD, .SDcols = intersect(keep_cols, names(dt))] %>% unique()
 }
 
+flag_duplicate_names <- function(dt) {
+  dt <- copy(dt)
+  if (all(c("county", "name") %in% names(dt))) {
+    dup <- dt[, .N, by = .(county, name)][N > 1]
+    if (nrow(dup) > 0) {
+      dt[dup, on = .(county, name), name := paste0(name, "*")]
+    }
+  }
+  dt
+}
+
 # Primary Workflow --------------------
-load_election_data <- function(year = NULL, election_code = NULL, election_date = NULL, election_type = "general") {
+load_election_data <- function(year = NULL,
+                               election_code = NULL,
+                               election_date = NULL,
+                               election_type = "general") {
   year <- year %||% format(Sys.Date(), "%Y")
 
   scheduled_contests <- scrape_scheduled_contests(year) %>% setDT()
@@ -96,11 +102,14 @@ load_election_data <- function(year = NULL, election_code = NULL, election_date 
   } else {
     scheduled_norm[, contest_label := NA_character_]
   }
-  scheduled_norm[, full_contest_name := paste(district, contest_label)]
-  scheduled_norm[, full_contest_name_norm := normalize_contest(full_contest_name)]
 
   candidate_lists <- scrape_candidate_lists(election_code) %>% setDT()
-  election_results <- if (!is.null(election_date)) scrape_election_results(election_date, election_type) else NULL
+
+  election_results <- if (!is.null(election_date)){
+      scrape_election_results(election_date, election_type)
+    }else{
+      NULL
+    }
   if (!is.null(election_results)) setDT(election_results)
   psrc_boards <- scrape_psrc_boards() %>% setDT()
 
@@ -121,10 +130,6 @@ load_election_tracker_input <- function(input_file = "election_tracker_input.xls
 
   election_tracker_input <- read.xlsx(input_file, sheet = 1) %>%
     as.data.table()
-
-  if ("ballot_name" %in% names(election_tracker_input)) {
-    election_tracker_input[, ballot_name_norm := normalize_contest(ballot_name)]
-  }
 
   message("Loaded election tracker input with ", nrow(election_tracker_input), " PSRC board members")
   return(election_tracker_input)
@@ -149,9 +154,12 @@ make_candidate_filing_report <- function(election_code = NULL, year = NULL,
 
   list(
     candidate_list = election_data$candidate_lists[status == "Active"] %>%
-      standardize_and_sort(),
+      standardize_and_sort() %>%
+      flag_duplicate_names(),
 
-    board_members_running = board_members_running %>% standardize_and_sort(),
+    board_members_running = board_members_running %>%
+      standardize_and_sort() %>%
+      flag_duplicate_names(),
 
     board_members_no_reelection = election_tracker_input[not_seeking_reelection == TRUE] %>%
       .[, .SD, .SDcols = intersect(noncandidate_rpt_cols, names(.))],
@@ -177,21 +185,24 @@ make_primary_election_report <- function(election_date, election_code = NULL, ye
   list(
     advancing = election_data$candidate_lists[status=="Active"] %>%
       .[election_data$election_results[outcome == "advanced"],
-        on = c("county", "full_contest_name_norm" = "contest_name_norm", "name" = "candidate"), nomatch = NULL] %>%
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
       rbind(election_data$candidate_lists[election_status == "Advanced to General"], fill=TRUE) %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     board_members_advanced = board_members_running[status=="Active"] %>%
       .[election_data$election_results[outcome == "advanced"],
-        on = c("county", "full_contest_name_norm" = "contest_name_norm", "name" = "candidate"), nomatch = NULL] %>%
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
       rbind(board_members_running[election_status=="Advanced to General"], fill=TRUE) %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     board_members_eliminated = board_members_running %>%
       .[election_data$election_results[outcome == "lost"],
-        on = c("county", "full_contest_name_norm" = "contest_name_norm", "name" = "candidate"), nomatch = NULL] %>%
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
       rbind(board_members_running[status!="Active"], fill=TRUE) %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     not_seeking_reelection = election_tracker_input[not_seeking_reelection == TRUE] %>%
       .[, .SD, .SDcols = intersect(noncandidate_rpt_cols, names(.))]
@@ -208,78 +219,47 @@ make_general_election_report <- function(election_date, election_code = NULL, ye
 
   election_data <- load_election_data(year, election_code, election_date, "general")
   board_members_running <- join_boards_w_candidates(election_tracker_input, election_data$candidate_lists)
-  # Use normalized scheduled races from load_election_data for consistency
   scheduled_norm <- election_data$scheduled_norm
 
   winners <- election_data$candidate_lists[status=="Active"] %>%
     .[election_data$election_results[outcome == "won"],
-      on = c("county", "full_contest_name_norm" = "contest_name_norm", "name" = "candidate"), nomatch = NULL] %>%
-    .[scheduled_norm[, .(county, district, contest = contest_label, incumbent, full_contest_name, full_contest_name_norm)],
-      on = c("county", "full_contest_name_norm"), nomatch = 0]
+      on = c("county", "name" = "candidate"), nomatch = NULL] %>%
+    .[scheduled_norm[, .(county, district, contest = contest_label, incumbent)],
+      on = c("county", "district", "contest"), nomatch = 0] %>%
+    .[, full_contest_name := paste(district, contest)]
 
   list(
-    won = winners %>% standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+    won = winners %>%
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     board_members_won = board_members_running[status=="Active"] %>%
       .[election_data$election_results[outcome == "won"],
-        on = c("county", "full_contest_name_norm" = "contest_name_norm", "name" = "candidate"), nomatch = NULL] %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     board_members_lost = board_members_running %>%
       .[election_data$election_results[outcome == "lost"],
-        on = c("county", "full_contest_name_norm" = "contest_name_norm", "name" = "candidate"), nomatch = NULL] %>%
+        on = c("county", "name" = "candidate"), nomatch = NULL] %>%
       rbind(board_members_running[status!="Active"], fill=TRUE) %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     non_board_reelecteds = winners[name == incumbent] %>%
-      # Exclude board members by composite key (county + normalized contest + candidate name)
-      .[!board_members_running[, .(county, full_contest_name_norm, name)],
-        on = c("county", "full_contest_name_norm", "name")] %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome")),
+      # Exclude board members by composite key (county + candidate name)
+      .[!board_members_running[, .(county, name)],
+        on = c("county", "name")] %>%
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols)) %>%
+      flag_duplicate_names(),
 
     newly_electeds = winners[name != incumbent] %>%
       setnames("incumbent", "replaces") %>%
-      standardize_and_sort(keep_cols = c(candidate_rpt_cols, "full_contest_name", "votes", "percentage", "outcome", "replaces")),
+      standardize_and_sort(keep_cols = c(candidate_rpt_cols, election_rpt_cols, "replaces")) %>%
+      flag_duplicate_names(),
 
     not_seeking_reelection = election_tracker_input[not_seeking_reelection == TRUE] %>%
       .[, .SD, .SDcols = intersect(noncandidate_rpt_cols, names(.))]
-  )
-}
-
-# Diagnostic: surface normalization mismatches across sources
-diagnose_contest_normalization <- function(election_code = NULL, year = NULL,
-                                           election_tracker_input = NULL) {
-  if (is.null(election_tracker_input)) {
-    election_tracker_input <- load_election_tracker_input()
-  }
-  election_data <- load_election_data(year, election_code)
-
-  # Build normalized contest names for scheduled contests if columns exist
-  scheduled <- copy(election_data$scheduled_norm)
-
-  candidates <- copy(election_data$candidate_lists)
-  if (!"full_contest_name_norm" %in% names(candidates) && "full_contest_name" %in% names(candidates)) {
-    candidates[, full_contest_name_norm := normalize_contest(full_contest_name)]
-  }
-
-  unmatched_scheduled <- scheduled[!(full_contest_name_norm %in% candidates$full_contest_name_norm)]
-  unmatched_candidates <- candidates[!(full_contest_name_norm %in% scheduled$full_contest_name_norm)]
-
-  # Only consider board members who are actually expected to run
-  active_board_members <- election_tracker_input[!(not_seeking_reelection == TRUE | not_up_for_reelection == TRUE)]
-  missing_ballot_names <- active_board_members[is.na(ballot_name) | ballot_name == ""]
-
-  list(
-    unmatched_scheduled = unmatched_scheduled[, .(district, office = contest_label, full_contest_name, full_contest_name_norm)][order(full_contest_name_norm)],
-    unmatched_candidates = unmatched_candidates[, .(county, district, contest, full_contest_name, full_contest_name_norm)][order(full_contest_name_norm)],
-    missing_ballot_names = missing_ballot_names[, .(psrc_name, board_affiliation, ballot_name, ballot_name_norm)],
-    overlap_counts = list(
-      scheduled_total = nrow(scheduled),
-      candidates_total = nrow(candidates),
-      scheduled_unmatched = nrow(unmatched_scheduled),
-      candidates_unmatched = nrow(unmatched_candidates),
-      active_board_missing_ballot_name = nrow(missing_ballot_names)
-    )
   )
 }
 
@@ -323,11 +303,6 @@ write_report_list_xlsx <- function(tables_list, output_file = "report.xlsx") {
 # Workflow example -----------------------------
 # eti <- generate_election_tracker_input(year = 2025, election_code = 893)
 # eti <- load_election_tracker_input()
-# diag <- diagnose_contest_normalization(election_code = 893, year = 2025, election_tracker_input = eti)
-# str(diag$overlap_counts)
-# View(diag$unmatched_scheduled)
-# View(diag$unmatched_candidates)
-# View(diag$missing_ballot_names)
 # candidate_filing_2025 <- make_candidate_filing_report(election_code = 893, year = 2025, election_tracker_input = eti)
 # primary_election_2025 <- make_primary_election_report(election_date = "20250805", election_code = 893, year = 2025, election_tracker_input = eti)
 # general_election_2025 <- make_general_election_report(election_date = "20251104", election_code = 894, year = 2025, election_tracker_input = eti)

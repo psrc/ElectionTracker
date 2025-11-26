@@ -47,6 +47,31 @@ find_best_name_match <- function(psrc_name, candidate_names, threshold = 0.8) {
     ))
   }
 
+  # Helper function to score first-name similarity
+  # Returns 1.0 for exact match, 0.9 for prefix-based relaxed match, 0 otherwise
+  first_name_similarity <- function(f1, f2) {
+    # Handle NA or empty values defensively
+    if (is.na(f1) || is.na(f2) || f1 == "" || f2 == "") return(0)
+
+    # Exact match
+    if (f1 == f2) return(1.0)
+
+    # Must start with same first letter
+    if (substr(f1, 1, 1) != substr(f2, 1, 1)) return(0)
+
+    # Check if shorter is a prefix of longer
+    len1 <- nchar(f1)
+    len2 <- nchar(f2)
+    shorter <- if (len1 <= len2) f1 else f2
+    longer  <- if (len1 <= len2) f2 else f1
+
+    if (substr(longer, 1, nchar(shorter)) == shorter) {
+      return(0.9)
+    }
+
+    return(0)
+  }
+
   # Normalize the PSRC name
   psrc_normalized <- normalize_name(psrc_name)
 
@@ -54,13 +79,13 @@ find_best_name_match <- function(psrc_name, candidate_names, threshold = 0.8) {
   matches <- map_dfr(seq_along(candidate_names), function(i) {
     candidate_normalized <- normalize_name(candidate_names[i])
 
-    # Must have exact match on first and last name
-    first_match <- psrc_normalized$first == candidate_normalized$first
+    # Allow exact or prefix-based first-name matches; last must be exact
+    first_sim <- first_name_similarity(psrc_normalized$first, candidate_normalized$first)
     last_match <- psrc_normalized$last == candidate_normalized$last
 
-    if (first_match && last_match) {
-      # Calculate a match score
-      score <- 1.0  # Base score for first/last name match
+    if (first_sim > 0 && last_match) {
+      # Calculate a match score based on first-name similarity
+      score <- first_sim
 
       # Check middle name compatibility
       psrc_middles <- psrc_normalized$middle_initials
@@ -108,7 +133,7 @@ find_best_name_match <- function(psrc_name, candidate_names, threshold = 0.8) {
     return(best_match$candidate)
   }
 
-  # No fallback fuzzy matching - return NA if no exact first/last match found
+  # Return NA if no match found
   return(NA_character_)
 }
 
