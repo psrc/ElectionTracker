@@ -249,6 +249,18 @@ generate_election_tracker_input <- function(year = NULL, election_code = NULL,
       election_tracker_input$not_seeking_reelection[i] <- TRUE
     }
 
+    # temporary debug checks
+    if (is_incumbent && !appears_as_active_candidate) {
+      cat("Marking not seeking reelection:", psrc_name, "\n")
+      election_tracker_input$not_seeking_reelection[i] <- TRUE
+    }
+    if (psrc_name == "Jan Schuette") {
+      cat("DEBUG Jan Schuette row:",
+          "psrc_name =", psrc_name,
+          "is_incumbent =", is_incumbent,
+          "appears_as_active_candidate =", appears_as_active_candidate, "\n")
+    }
+
     # Only try to find ballot name matches if they're potentially running
     if (!election_tracker_input$not_up_for_reelection[i] &&
         !election_tracker_input$not_seeking_reelection[i]) {

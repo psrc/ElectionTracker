@@ -7,7 +7,7 @@ library(readr)
 library(magrittr)
 
 # Helper function for single county (internal use)
-scrape_single_county_contests <- function(year, county_name, county_code) {
+ scrape_single_county_contests <- function(year, county_name, county_code) {
 
 	message("Processing ", county_name, " County contests for year: ", year)
 
@@ -81,7 +81,7 @@ scrape_single_county_contests <- function(year, county_name, county_code) {
 							setnames("lead_county", "county") %>%
 							.[str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
 									str_detect(tolower(office), paste0(OFFICE_TERMS, collapse = "|")) &
-									!str_detect(tolower(district), "district")] %>%
+							    !str_detect(tolower(district), paste0(DISTRICT_EXCLUSIONS, collapse = "|"))] %>%
 							# Add county information
 							.[, `:=`(district = ifelse(grepl("^County", trimws(district)), paste(county_name, "County"),
 																				 custom_title_case(district)),
@@ -109,7 +109,7 @@ scrape_single_county_contests <- function(year, county_name, county_code) {
 }
 
 # Main vectorized function
-scrape_scheduled_contests <- function(year = 2025) {
+scrape_scheduled_contests <- function(year = 2026) {
 
 	message("Scraping scheduled contests for year: ", year, " across all counties")
 

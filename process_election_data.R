@@ -110,7 +110,15 @@ load_election_data <- function(year = NULL,
     }else{
       NULL
     }
-  if (!is.null(election_results)) setDT(election_results)
+  if (!is.null(election_results)) {
+    failed_counties <- attr(election_results, "failed_counties")
+    if (length(failed_counties) > 0L) {
+      stop("Cannot generate an election report: results could not be retrieved for ",
+           paste(failed_counties, collapse = ", "),
+           ". Check the URLs reported above and retry when results are available.")
+    }
+    setDT(election_results)
+  }
   psrc_boards <- scrape_psrc_boards() %>% setDT()
 
   list(
@@ -301,9 +309,9 @@ write_report_list_xlsx <- function(tables_list, output_file = "report.xlsx") {
 }
 
 # Workflow example -----------------------------
-# eti <- generate_election_tracker_input(year = 2025, election_code = 893)
+# eti <- generate_election_tracker_input(year = 2025, election_code = 899)
 # eti <- load_election_tracker_input()
-# candidate_filing_2025 <- make_candidate_filing_report(election_code = 893, year = 2025, election_tracker_input = eti)
-# primary_election_2025 <- make_primary_election_report(election_date = "20250805", election_code = 893, year = 2025, election_tracker_input = eti)
-# general_election_2025 <- make_general_election_report(election_date = "20251104", election_code = 894, year = 2025, election_tracker_input = eti)
-# write_report_list_xlsx(general_election_2025, output_file = "general_election_report_2025.xlsx")
+# candidate_filing_2026 <- make_candidate_filing_report(election_code = 899, year = 2026, election_tracker_input = eti)
+# primary_election_2026 <- make_primary_election_report(election_date = "20260804", election_code = 898, year = 2026, election_tracker_input = eti)
+# ge_2026 <- make_general_election_report(election_date = "20261103", election_code = 899, year = 2026, election_tracker_input = eti)
+# write_report_list_xlsx(ge_2026, output_file = "ge_2026.xlsx")

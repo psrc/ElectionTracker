@@ -109,7 +109,7 @@ scrape_single_county_contests <- function(year, county_name, county_code) {
 }
 
 # Main vectorized function
-scrape_scheduled_races <- function(year = 2025) {
+scrape_scheduled_races <- function(year = 2026) {
 
   message("Scraping scheduled contests for year: ", year, " across all counties")
 

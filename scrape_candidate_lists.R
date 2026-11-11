@@ -6,40 +6,6 @@ library(stringr)
 library(httr)
 library(magrittr)
 
-# Function to get the current election code
-get_current_election_code <- function() {
-  base_url <- "https://voter.votewa.gov/CandidateList.aspx"
-
-  tryCatch({
-    message("Determining current election code...")
-
-    # Make a GET request that will follow redirects
-    response <- GET(base_url, config = config(followlocation = TRUE))
-
-    # Get the final URL after redirects
-    final_url <- response$url
-    message("Final URL after redirect: ", final_url)
-
-    # Extract election code from the URL using regex
-    election_code_match <- str_match(final_url, "e=([0-9]+)")
-
-    if (!is.na(election_code_match[1, 2])) {
-      election_code <- as.numeric(election_code_match[1, 2])
-      message("Current election code detected: ", election_code)
-      return(election_code)
-    } else {
-      message("Could not extract election code from URL: ", final_url)
-      message("Falling back to default election code: 893")
-      return(893)
-    }
-
-  }, error = function(e) {
-    message("Error determining current election code: ", e$message)
-    message("Falling back to default election code: 893")
-    return(893)
-  })
-}
-
 # Helper function for single county (internal use)
 scrape_single_county_candidates <- function(election_code, county_name, county_code) {
 
@@ -105,7 +71,7 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
           message("Successfully got CSV data for ", county_name)
 
           # Parse CSV and convert to data.table
-          candidate_data <- read_csv(csv_content, show_col_types = FALSE) %>%
+          candidate_data <- read_csv(I(csv_content, show_col_types = FALSE)) %>%
             as.data.table() %>%
             # Clean column names
             setnames(., tolower(gsub("\\W", "_", names(.)))) %>%
@@ -126,8 +92,7 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
             .[, district := ifelse(grepl("^County", trimws(district)), paste(county_name, "County"),
                                   custom_title_case(district))] %>%
             .[, `:=`(county = county_name,
-                     full_contest_name = paste(district, contest))] %>%
-            .[, full_contest_name_norm := normalize_contest(full_contest_name)]
+                     full_contest_name = paste(district, contest))]
           filtered_data <- candidate_data[
             str_detect(tolower(district), paste0(DISTRICT_TERMS, collapse = "|")) &
             str_detect(tolower(contest), paste0(OFFICE_TERMS, collapse = "|")) &
@@ -151,18 +116,7 @@ scrape_single_county_candidates <- function(election_code, county_name, county_c
 }
 
 # Main vectorized function
-scrape_candidate_lists <- function(election_code = NULL) {
-
-  # If no election code provided, determine the current one
-  if (is.null(election_code)) {
-    election_code <- get_current_election_code()
-  }
-
-  # Ensure we have a valid election code
-  if (is.null(election_code) || is.na(election_code) || election_code == "") {
-    message("Warning: Could not determine election code, using default 893")
-    election_code <- 893
-  }
+scrape_candidate_lists <- function(election_code) {
 
   message("Scraping candidate lists for election code: ", election_code, " across all counties")
 
